@@ -21,8 +21,10 @@ from mlflow.protos.databricks_pb2 import (INTERNAL_ERROR,
                                           INVALID_PARAMETER_VALUE,
                                           RESOURCE_DOES_NOT_EXIST)
 from mlflow.tracking.artifact_utils import _download_artifact_from_uri
-from mlflow.utils import experimental, extract_db_type_from_uri
+from mlflow.utils import experimental
 from mlflow.utils.model_utils import _get_flavor_configuration
+
+from .schema.model_table import Base as InitialBase, make_deployed_model
 
 _logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ SUPPORTED_DEPLOYMENT_FLAVORS = [
 
 
 @experimental
-def create(model_uri, db_uri, flavor, table_name=None):
+def create(model_uri, db_uri, flavor, table_name="models"):
     """
     Register an MLflow model with a SQL database.
     :param model_uri: The location, in URI format, of the MLflow model used to build the Azure
@@ -53,23 +55,82 @@ def create(model_uri, db_uri, flavor, table_name=None):
                    will be thrown.
     :param table_name: The name of the SQL table to deploy the model to. If not specified, will use 'models' table.
     """
+    engine = sqlalchemy.create_engine(db_uri)
 
-    model_path = _download_artifact_from_uri(model_uri)
-    model_config_path = os.path.join(model_path, "MLmodel")
-    if not os.path.exists(model_config_path):
-        raise MlflowException(
-            message=(
-                "Failed to find MLmodel configuration within the specified model's"
-                " root directory."),
-            error_code=INVALID_PARAMETER_VALUE)
-    model_config = Model.load(model_config_path)
-    _validate_deployment_flavor(model_config, flavor)
-    flavor_conf = _get_flavor_configuration(model_path=model_path, flavor_name=flavor)
-    onnx_model = os.path.join(model_path, flavor_conf["data"])
+    # insp = sqlalchemy.inspect(engine)
+    # expected_tables = set([
+    #    table_name
+    # ])
+    # if len(expected_tables & set(insp.get_table_names())) == 0:
+    _logger.info("Creating initial MLflow database tables...")
+    table = make_deployed_model(table_name)
+    table.__table__.create(bind=engine, checkfirst=True)
+    InitialBase.metadata.bind = engine
+    SessionMaker = sqlalchemy.orm.sessionmaker(bind=engine)
+    ManagedSessionMaker = _get_managed_session_maker(SessionMaker)
 
-    if table_name is None:
-        table_name = "models"
-    insert_db(db_uri, table_name, onnx_model)
+    # model_path = _download_artifact_from_uri(model_uri)
+    # model_config_path = os.path.join(model_path, "MLmodel")
+    # if not os.path.exists(model_config_path):
+    #     raise MlflowException(
+    #         message=(
+    #             "Failed to find MLmodel configuration within the specified model's"
+    #             " root directory."),
+    #         error_code=INVALID_PARAMETER_VALUE)
+    # model_config = Model.load(model_config_path)
+    # _validate_deployment_flavor(model_config, flavor)
+    # flavor_conf = _get_flavor_configuration(model_path=model_path, flavor_name=flavor)
+    # onnx_model = os.path.join(model_path, flavor_conf["data"])
+
+    with ManagedSessionMaker() as session:
+        deployed_model = table(
+            model_name="name", model_version="1.0",
+            model_framework="t",
+            model_framework_version="t",
+            model=None,
+            model_creation_time=None,
+            model_deployment_time=None,
+            deployed_by=None,
+            model_description=None,
+            experiment_name=None
+        )
+        session.add(deployed_model)
+        session.flush()
+
+
+def _initialize_table(engine, table_name):
+    _logger.info("Creating initial MLflow database tables...")
+    make_deployed_model(table_name).__table__.create(bind=engine,
+                                                     checkfirst=True)
+    # InitialBase.metadata.create_all(engine)
+
+
+def _get_managed_session_maker(SessionMaker):
+    """
+    Creates a factory for producing exception-safe SQLAlchemy sessions that are made available
+    using a context manager. Any session produced by this factory is automatically committed
+    if no exceptions are encountered within its associated context. If an exception is
+    encountered, the session is rolled back. Finally, any session produced by this factory is
+    automatically closed when the session's associated context is exited.
+    """
+
+    @contextmanager
+    def make_managed_session():
+        """Provide a transactional scope around a series of operations."""
+        session = SessionMaker()
+        try:
+            yield session
+            session.commit()
+        except MlflowException:
+            session.rollback()
+            raise
+        except Exception as e:
+            session.rollback()
+            raise MlflowException(message=e, error_code=INTERNAL_ERROR)
+        finally:
+            session.close()
+
+    return make_managed_session
 
 
 def _validate_deployment_flavor(model_config, flavor):
@@ -93,13 +154,13 @@ def _validate_deployment_flavor(model_config, flavor):
             message=("The specified model does not contain the specified deployment flavor:"
                      " `{flavor_name}`. Please use one of the following deployment flavors"
                      " that the model contains: {model_flavors}".format(
-                         flavor_name=flavor, model_flavors=model_config.flavors.keys())),
+                flavor_name=flavor, model_flavors=model_config.flavors.keys())),
             error_code=RESOURCE_DOES_NOT_EXIST)
 
 
 def insert_db(db_uri, table_name, column_name, onnx_model):
     engine = sqlalchemy.create_engine(db_uri)
-    artifact_content=open(onnx_model, "rb").read()
+    artifact_content = open(onnx_model, "rb").read()
     # Create connection
     conn = engine.connect()
     meta = MetaData(engine, reflect=True)
