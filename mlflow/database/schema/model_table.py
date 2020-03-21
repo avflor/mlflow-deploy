@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, String, VARBINARY, BigInteger, Integer, PrimaryKeyConstraint)
+    Column, String, VARBINARY, Integer, PrimaryKeyConstraint)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.mssql import DATETIME2
 
@@ -9,19 +9,18 @@ Base = declarative_base()
 def make_deployed_model(name):
     class DeployedModel(Base):
         """
-        DB model for :py:class:`mlflow.entities.DeployedModel`.
-        These are recorded in ``models`` table.
+        DB model for deployed models.
         """
 
         __tablename__ = name
 
         model_id = Column(Integer, autoincrement=True)
         """
-        Model ID: `Integer`. *Primary Key* for ``model`` table.
+        Model ID: `Integer`. *Primary Key* for the table.
         """
         model_name = Column(String(256), nullable=False)
         """
-        Model Name: ``String` (limit 256 characters).
+        Model Name as registered in the MLflow registry: ``String` (limit 256 characters).
         """
         model_version = Column(String(50), nullable=False)
         """
@@ -33,9 +32,9 @@ def make_deployed_model(name):
         """
         model_framework_version = Column(String(50), nullable=False)
         """
-        Framework version used to train the model: : `String`. Defined as *Non null* in table schema.
+        Framework version used to train the model: : `String`. 
         """
-        model = Column(VARBINARY, nullable=True)
+        model = Column(VARBINARY, nullable=False)
         """
         Model  : `VARBINARY`.    
         """
@@ -43,21 +42,21 @@ def make_deployed_model(name):
         """
         Model creation time : `DATETIME2`. Defined as *null* in table schema.
         """
-        model_deployment_time = Column(DATETIME2, nullable=True)
+        model_deployment_time = Column(DATETIME2, nullable=False)
         """
-        Model deployment time : `DATETIME2`. Defined as *null* in table schema.
+        Model deployment time : `DATETIME2`.
         """
         deployed_by = Column(Integer, nullable=True)
         """
         Principal ID that deployed the model: `Integer`. 
         """
-        model_description = Column(String(256), nullable=True)
+        model_description = Column(String(1024), nullable=True)
         """
-        Model description: `String`.
+        Model description as presented in the model registry: `String`.
         """
-        experiment_name = Column(String(100), nullable=True)
+        run_id = Column(String(100), nullable=True)
         """
-        Experiment name: `String`. 
+        MLflow run id associated with the model: `String`. 
         """
 
         __table_args__ = (
