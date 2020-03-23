@@ -11,6 +11,8 @@ from datetime import datetime
 import sqlalchemy
 
 from mlflow import onnx
+from mlflow import sklearn
+
 from mlflow.exceptions import MlflowException
 from mlflow.models import Model
 from mlflow.protos.databricks_pb2 import (INTERNAL_ERROR,
@@ -25,7 +27,8 @@ from .schema.model_table import Base as InitialBase, make_deployed_model
 _logger = logging.getLogger(__name__)
 
 SUPPORTED_DEPLOYMENT_FLAVORS = [
-    onnx.FLAVOR_NAME
+    onnx.FLAVOR_NAME,
+    sklearn.FLAVOR_NAME
 ]
 
 
